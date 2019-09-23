@@ -29,11 +29,18 @@ def _try_clip_image(image_file, output_dir):
     ref = _configs['size'][ref_name]
     assert ref and len(ref) == 2
 
-    direction = _direction_vertical if '竖版' in image_file else _direction_horizontal
-
     im_obj = Image.open(image_file)
     orig_size = im_obj.size
     width, height = orig_size[0], orig_size[1]
+
+    if '竖版' in image_file :
+        direction = _direction_vertical 
+    elif '横版' in image_file :
+        direction = _direction_horizontal
+    elif width > height :
+        direction = _direction_horizontal 
+    else:
+        direction = _direction_vertical
 
     if (direction == _direction_horizontal and width < height) or (direction == _direction_vertical and width > height):
         ref_size = ref
