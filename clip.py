@@ -5,93 +5,78 @@ import logging
 import os
 
 import click
-from PIL import Image
 
 logging.basicConfig(level=logging.INFO)
 
-_direction_horizontal = 'horizontal'
-_direction_vertical = 'vertical'
-
-_configs = {
-    'pos' : {
-        _direction_vertical  : "竖着摆放",
-        _direction_horizontal: "横着摆放",
-    },
-    'size': {
-        '8寸' : (122, 172),
-        '10寸': (175, 225),
-    }
-}
+_context_settings = dict(help_option_names=['-h', '--help'])
+_cmd_kwargs = dict(context_settings=_context_settings)
+_default_options = dict(show_default=True, required=True)
 
 
-def _try_clip_image(image_file, output_dir):
-    ref_name = '8寸' if '8寸' in image_file else '10寸'
-    ref = _configs['size'][ref_name]
-    assert ref and len(ref) == 2
-
-    im_obj = Image.open(image_file)
-    orig_size = im_obj.size
-    width, height = orig_size[0], orig_size[1]
-
-    if '竖版' in image_file :
-        direction = _direction_vertical 
-    elif '横版' in image_file :
-        direction = _direction_horizontal
-    elif width > height :
-        direction = _direction_horizontal 
-    else:
-        direction = _direction_vertical
-
-    if (direction == _direction_horizontal and width < height) or (direction == _direction_vertical and width > height):
-        ref_size = ref
-    else:
-        if width > height:
-            ref_size = (ref[1], ref[0])
-        else:
-            ref_size = ref
-
-    clip_height = int(width * (ref_size[1] / ref_size[0]))
-    clip_width = int(height * (ref_size[0] / ref_size[1]))
-
-    if clip_height > height:
-        clip_size = (clip_width, height)
-    else:
-        clip_size = (width, clip_height)
-    if clip_size[0] == width:
-        delta = int((height - clip_size[1]) / 2)
-        board = (0, delta, width, delta + clip_size[1])
-    else:
-        delta = int((width - clip_size[0]) / 2)
-        board = (delta, 0, delta + clip_size[0], height)
-        pass
-
-    copped = im_obj.crop(board)
-    if clip_size[0] > clip_size[1]:
-        copped = copped.transpose(Image.ROTATE_90)
-
-    copped.save("%s/%s-%s-%s" % (output_dir, ref_name, _configs['pos'][direction], str.rsplit(image_file, '/', 1)[1]),
-                quality=100)
-    logging.info("src=%s, \torig_size=%s\tclip_size=%s", image_file, orig_size, clip_size)
-    pass
-
-
-@click.command()
-@click.option("--input", '-i', type=click.STRING, required=True, help='原始图片目录')
-@click.option('--extension', '-e', default='jpg', required=True, help='图片格式')
-@click.option("--output", '-o', type=click.STRING, required=True, help='输出图片目录')
-def cli(**kwargs):
+@click.group(invoke_without_command=True, **_cmd_kwargs)
+@click.option("--input", '-i', default='src', help='原始图片目录', **_default_options)
+@click.option('--extension', '-e', default='jpg', help='图片格式', **_default_options)
+@click.pass_context
+def cli(ctx, **kwargs):
     """
     照片冲洗，按照要求尺寸进行图片裁剪
     """
-    input_dir, ext = kwargs['input'], str.lower(kwargs['extension'])
-    output_dir = kwargs['output']
+    assert isinstance(ctx, click.Context)
+    params = dict()
+    params.update(**kwargs)
+    ext = str.lower(kwargs['extension'])
+    if not ext.startswith('.'):
+        ext = '.' + ext
+    input_dir = kwargs['input']
     file_list = []
     for root_dir, _, fs in os.walk(input_dir):
-        file_list += [os.path.join(root_dir, a_file) for a_file in fs
-                      if str.endswith(a_file.lower(), ext)]
-    for file in file_list:
-        _try_clip_image(file, output_dir)
+        file_list += [os.path.join(root_dir, name) for name in fs
+                      if str.endswith(name.lower(), ext)]
+        pass
 
+    params['file_list'] = file_list
+
+    ctx.obj = params
+    if ctx.invoked_subcommand is None:
+        ctx.invoke(info)
+    return ctx
+
+
+@cli.command()
+@click.option("--output", '-o', default='out', help='输出图片目录', **_default_options)
+@click.option('--rotate_vertical', '-r', is_flag=True, help='强制旋转竖版')
+@click.option('--ref', type=click.STRING, help="输出宽高比，E.g: 150,200")
+@click.pass_context
+def clip(ctx, **kwargs):
+    """批量裁剪"""
+    from common.clip import ImageUtility
+    output_dir = kwargs['output']
+    rotate_vertical = kwargs['rotate_vertical']
+    try:
+        ref = tuple(map(int, str.split(kwargs['ref'], ',')))
+        assert len(ref) == 2 and ref[0] > 0 and ref[1] > 0
+    except (Exception,):
+        ref = None
+
+    logging.info('input_files: %d \t\toutput_dir=%s\trotate_vertical=%s\tref=%s',
+                 len(ctx.obj['file_list']), output_dir, rotate_vertical, ref)
+
+    util = ImageUtility()
+    for filename in ctx.obj['file_list']:
+        util.try_clip(filename, output_dir, rotate_vertical=rotate_vertical, ref=ref)
+    return
+
+
+@cli.command()
+@click.pass_context
+def info(ctx):
+    """获取图像信息，尺寸（宽、高），分辨率"""
+    from common.clip import ImageUtility
+    logging.info('input_files: %d ', len(ctx.obj['file_list']))
+
+    util = ImageUtility()
+    for filename in ctx.obj['file_list']:
+        util.show_info(filename)
     return
 
 
